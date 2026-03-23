@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { writeReport } from '@/lib/data';
 
-const UPLOAD_TOKEN = process.env.DASHBOARD_UPLOAD_TOKEN;
-
 export async function POST(request: NextRequest) {
-  // Auth check
+  // Auth check — read at runtime, not build time
+  const token = process.env.DASHBOARD_UPLOAD_TOKEN;
   const authHeader = request.headers.get('authorization');
-  if (!UPLOAD_TOKEN || authHeader !== `Bearer ${UPLOAD_TOKEN}`) {
+  if (!token || authHeader !== `Bearer ${token}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
