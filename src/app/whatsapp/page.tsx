@@ -1,0 +1,143 @@
+"use client";
+
+import { useEffect, useState, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+import SummaryCards from "@/components/summary-cards";
+import CollapsibleSection from "@/components/collapsible-section";
+import AlertCard from "@/components/alert-card";
+import PriorityBadge from "@/components/priority-badge";
+import type { PeriskopeReport } from "@/lib/types";
+
+function WhatsAppPageInner() {
+  const searchParams = useSearchParams();
+  const date =
+    searchParams.get("date") || new Date().toISOString().slice(0, 10);
+
+  const [data, setData] = useState<PeriskopeReport | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`/api/data/periskope?date=${date}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setData)
+      .finally(() => setLoading(false));
+  }, [date]);
+
+  if (loading)
+    return (
+      <div className="flex items-center justify-center py-20 text-muted">
+        Cargando...
+      </div>
+    );
+  if (!data)
+    return (
+      <div className="text-center py-20 text-muted">
+        No hay datos de WhatsApp para {date}
+      </div>
+    );
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-lg font-bold">WhatsApp Alerts</h2>
+        <div className="text-sm text-muted">{date}</div>
+      </div>
+
+      <SummaryCards
+        cards={[
+          {
+            label: "Ops Monitoreados",
+            value: data.summary.ops_monitored,
+            color: "accent",
+          },
+          {
+            label: "Grupos Activos",
+            value: data.summary.active_groups,
+            color: "accent",
+          },
+          {
+            label: "Total Alertas",
+            value: data.summary.total_alerts,
+            color: "accent",
+          },
+          { label: "Alta", value: data.summary.alerts_alta, color: "alta" },
+          { label: "Media", value: data.summary.alerts_media, color: "media" },
+          { label: "Baja", value: data.summary.alerts_baja, color: "baja" },
+        ]}
+      />
+
+      {data.ops_executives.map((ops) => {
+        const alta = ops.alerts.filter((a) => a.priority === "alta").length;
+        const media = ops.alerts.filter((a) => a.priority === "media").length;
+        const baja = ops.alerts.filter((a) => a.priority === "baja").length;
+        const initials = ops.name
+          .split(" ")
+          .slice(0, 2)
+          .map((w) => w[0]?.toUpperCase() || "")
+          .join("");
+
+        return (
+          <CollapsibleSection
+            key={ops.name}
+            title={ops.name}
+            subtitle={`${ops.alerts.length} alerta${ops.alerts.length !== 1 ? "s" : ""}`}
+            avatar={initials}
+            defaultOpen={alta > 0}
+            badges={
+              <div className="flex gap-1.5">
+                {alta > 0 && <PriorityBadge priority="alta" />}
+                {media > 0 && <PriorityBadge priority="media" />}
+                {baja > 0 && <PriorityBadge priority="baja" />}
+              </div>
+            }
+          >
+            {ops.alerts.length === 0 ? (
+              <p className="text-sm text-muted py-2">
+                ✅ Sin alertas
+              </p>
+            ) : (
+              ops.alerts
+                .sort((a, b) => {
+                  const order = { alta: 0, media: 1, baja: 2 };
+                  return order[a.priority] - order[b.priority];
+                })
+                .map((alert, i) => (
+                  <AlertCard
+                    key={i}
+                    priority={alert.priority}
+                    type={alert.type}
+                    groupName={alert.group_name}
+                    clientName={alert.client_name}
+                    detail={alert.detail}
+                    eventTime={alert.event_time}
+                    hoursWithoutResponse={alert.hours_without_response}
+                    actionSuggested={alert.action_suggested}
+                    shared={alert.shared}
+                  />
+                ))
+            )}
+          </CollapsibleSection>
+        );
+      })}
+
+      {data.observations && data.observations.length > 0 && (
+        <div className="bg-surface border border-border rounded-xl p-5 mt-6">
+          <h3 className="text-sm font-semibold mb-3">💡 Observaciones</h3>
+          {data.observations.map((obs, i) => (
+            <p key={i} className="text-sm text-foreground mb-2">
+              {obs}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function WhatsAppPage() {
+  return (
+    <Suspense>
+      <WhatsAppPageInner />
+    </Suspense>
+  );
+}
