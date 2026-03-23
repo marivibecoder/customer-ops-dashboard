@@ -2,7 +2,14 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { PeriskopeReport, SlackReport, MetabaseReport, MappingsFile } from './types';
 
-const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
+// In production (Railway without volume), use /tmp for writable storage.
+// Data uploaded via /api/upload persists until next deploy.
+// Locally, use the project's data/ directory.
+const DATA_DIR = process.env.DATA_DIR || (
+  process.env.NODE_ENV === 'production'
+    ? '/tmp/dashboard-data'
+    : path.join(process.cwd(), 'data')
+);
 
 export async function readReport<T>(source: string, date: string): Promise<T | null> {
   try {
