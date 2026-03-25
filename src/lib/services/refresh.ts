@@ -14,6 +14,16 @@ interface RefreshResult {
   duration_ms: number
 }
 
+// Wrap a promise with a timeout
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms)
+    ),
+  ])
+}
+
 export async function runRefresh(trigger: 'cron' | 'manual' = 'manual'): Promise<RefreshResult> {
   const startTime = Date.now()
   const today = new Date().toISOString().split('T')[0]
@@ -38,7 +48,9 @@ export async function runRefresh(trigger: 'cron' | 'manual' = 'manual'): Promise
   )
   const analyzer = new AnalyzerService(process.env.ANTHROPIC_API_KEY!)
 
-  // Run all three in parallel
+  const TIMEOUT_MS = 120_000 // 2 minutes per source
+
+  // Run all three in parallel with timeouts
   const results = await Promise.allSettled([
     // 1. Periskope + Claude analysis
     (async () => {
