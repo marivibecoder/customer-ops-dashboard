@@ -66,7 +66,11 @@ function WhatsAppPageInner() {
         return true;
       }),
     }))
-    .filter((ops) => ops.alerts.length > 0 || (!priorityFilter && !typeFilter && !search));
+    .filter((ops) => {
+      const hasActiveFilters = priorityFilter || typeFilter || search;
+      if (hasActiveFilters) return ops.alerts.length > 0;
+      return true; // show all ops when no filters active
+    });
 
   const totalFiltered = filteredOps.reduce(
     (sum, ops) => sum + ops.alerts.length,
