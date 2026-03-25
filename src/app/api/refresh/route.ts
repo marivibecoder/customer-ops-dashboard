@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { runRefresh } from '@/lib/services/refresh'
 
-export const maxDuration = 300 // 5 minutes max
-
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}))
@@ -16,8 +14,16 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const result = await runRefresh(trigger)
-    return NextResponse.json(result)
+    // Fire-and-forget: respond immediately, run refresh in background
+    // This avoids Railway's request timeout
+    runRefresh(trigger).catch((err) => {
+      console.error('[REFRESH] Background refresh failed:', err)
+    })
+
+    return NextResponse.json({
+      status: 'started',
+      message: 'Refresh started in background. Poll /api/refresh/status for updates.',
+    })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error'
     return NextResponse.json({ error: message }, { status: 500 })

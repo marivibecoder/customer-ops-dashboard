@@ -48,32 +48,51 @@ export function DateRefreshBar() {
     setRefreshStatus({ status: 'running' })
 
     try {
-      const res = await fetch('/api/refresh', {
+      await fetch('/api/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ trigger: 'manual' }),
       })
-      const data = await res.json()
-      setRefreshStatus({
-        status: data.status,
-        sources_completed: data.sources_completed,
-        duration_ms: data.duration_ms,
-        error_message: data.errors?.join('; '),
-      })
-      // Reload data for current date
-      router.refresh()
+      // Refresh runs in background — start polling for status
     } catch {
       setRefreshStatus({ status: 'error', error_message: 'Network error' })
-    } finally {
       setIsRefreshing(false)
     }
-  }, [router])
+  }, [])
+
+  // Poll for refresh status while refreshing
+  useEffect(() => {
+    if (!isRefreshing) return
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch('/api/refresh/status')
+        const data = await res.json()
+        setRefreshStatus(data)
+
+        if (data.status !== 'running') {
+          setIsRefreshing(false)
+          router.refresh()
+          clearInterval(interval)
+        }
+      } catch {
+        // Keep polling
+      }
+    }, 5000) // Poll every 5 seconds
+
+    return () => clearInterval(interval)
+  }, [isRefreshing, router])
 
   // Fetch last refresh status on mount
   useEffect(() => {
     fetch('/api/refresh/status')
       .then(r => r.json())
-      .then(setRefreshStatus)
+      .then((data) => {
+        setRefreshStatus(data)
+        if (data.status === 'running') {
+          setIsRefreshing(true) // Resume polling if a refresh is in progress
+        }
+      })
       .catch(() => {})
   }, [])
 

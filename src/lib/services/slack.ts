@@ -11,7 +11,7 @@ export class SlackService {
     })
   }
 
-  // Find all customer/client channels
+  // Find all customer/client channels (public only to avoid permission issues)
   async getClientChannels(): Promise<
     Array<{ id: string; name: string; topic: string; isMember: boolean }>
   > {
@@ -20,7 +20,7 @@ export class SlackService {
 
     do {
       const result = await this.client.conversations.list({
-        types: 'public_channel,private_channel',
+        types: 'public_channel',
         limit: 200,
         cursor,
         exclude_archived: true,
