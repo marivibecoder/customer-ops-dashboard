@@ -48,12 +48,12 @@ export async function runRefresh(trigger: 'cron' | 'manual' = 'manual'): Promise
   )
   const analyzer = new AnalyzerService(process.env.ANTHROPIC_API_KEY!)
 
-  const TIMEOUT_MS = 120_000 // 2 minutes per source
+  const TIMEOUT_MS = 300_000 // 5 minutes per source
 
   // Run all three in parallel with timeouts
   const results = await Promise.allSettled([
     // 1. Periskope + Claude analysis
-    (async () => {
+    withTimeout((async () => {
       const rawData = await periskope.fetchDailyData()
 
       // Group data by ops executive (using assigned_to or phone owner)
@@ -121,10 +121,10 @@ export async function runRefresh(trigger: 'cron' | 'manual' = 'manual'): Promise
 
       await writeReport('periskope', today, report)
       return 'periskope'
-    })(),
+    })(), TIMEOUT_MS, 'Periskope'),
 
     // 2. Slack + Claude analysis
-    (async () => {
+    withTimeout((async () => {
       const rawData = await slack.fetchDailyData()
       const channelsForAnalysis = rawData.map(ch => ({
         channelName: ch.channelName,
@@ -135,15 +135,15 @@ export async function runRefresh(trigger: 'cron' | 'manual' = 'manual'): Promise
       const report = await analyzer.analyzeSlackChannels(channelsForAnalysis)
       await writeReport('slack', today, report)
       return 'slack'
-    })(),
+    })(), TIMEOUT_MS, 'Slack'),
 
     // 3. Metabase (no Claude needed - pure data processing)
-    (async () => {
+    withTimeout((async () => {
       const rawData = await metabase.fetchAccountMetrics()
       const report = metabase.buildReport(rawData)
       await writeReport('metabase', today, report)
       return 'metabase'
-    })(),
+    })(), TIMEOUT_MS, 'Metabase'),
   ])
 
   // Process results
