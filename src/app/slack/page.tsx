@@ -3,6 +3,7 @@
 import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import SummaryCards from "@/components/summary-cards";
+import { TabRefreshButton } from "@/components/tab-refresh-button";
 import type { SlackReport } from "@/lib/types";
 
 function SlackPageInner() {
@@ -85,7 +86,10 @@ function SlackPageInner() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-lg font-bold">Slack Highlights</h2>
-        <div className="text-sm text-muted">{date}</div>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-muted">{date}</span>
+          <TabRefreshButton source="slack" />
+        </div>
       </div>
 
       <SummaryCards

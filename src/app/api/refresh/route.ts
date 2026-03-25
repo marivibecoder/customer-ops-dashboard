@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { runRefresh } from '@/lib/services/refresh'
+import { runRefresh, type SourceType } from '@/lib/services/refresh'
+
+const VALID_SOURCES: SourceType[] = ['periskope', 'slack', 'metabase']
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,14 +16,24 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Parse optional sources filter
+    let onlySources: SourceType[] | undefined
+    if (body.sources) {
+      const requested = Array.isArray(body.sources) ? body.sources : [body.sources]
+      onlySources = requested.filter((s: string) => VALID_SOURCES.includes(s as SourceType)) as SourceType[]
+      if (onlySources.length === 0) {
+        return NextResponse.json({ error: 'Invalid sources. Valid: periskope, slack, metabase' }, { status: 400 })
+      }
+    }
+
     // Fire-and-forget: respond immediately, run refresh in background
-    // This avoids Railway's request timeout
-    runRefresh(trigger).catch((err) => {
+    runRefresh(trigger, onlySources).catch((err) => {
       console.error('[REFRESH] Background refresh failed:', err)
     })
 
     return NextResponse.json({
       status: 'started',
+      sources: onlySources || VALID_SOURCES,
       message: 'Refresh started in background. Poll /api/refresh/status for updates.',
     })
   } catch (error: unknown) {

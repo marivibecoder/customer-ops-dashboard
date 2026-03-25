@@ -24,37 +24,53 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   ])
 }
 
-export async function runRefresh(trigger: 'cron' | 'manual' = 'manual'): Promise<RefreshResult> {
+export type SourceType = 'periskope' | 'slack' | 'metabase'
+const ALL_SOURCES: SourceType[] = ['periskope', 'slack', 'metabase']
+
+export async function runRefresh(
+  trigger: 'cron' | 'manual' = 'manual',
+  onlySources?: SourceType[],
+): Promise<RefreshResult> {
   const startTime = Date.now()
   const today = new Date().toISOString().split('T')[0]
   const sourcesCompleted: string[] = []
   const errors: string[] = []
+  const sourcesToRun = onlySources || ALL_SOURCES
 
   // Log the refresh start
   const { data: logRow } = await supabase
     .from('refresh_logs')
-    .insert({ trigger, status: 'running' })
+    .insert({ trigger, status: 'running', sources_completed: [] })
     .select('id')
     .single()
   const logId = logRow?.id
 
-  // Initialize services
-  const periskope = new PeriskopeService(process.env.PERISKOPE_BEARER_TOKEN!)
-  const slack = new SlackService(process.env.SLACK_BOT_TOKEN!)
-  const metabase = new MetabaseService(
-    process.env.METABASE_URL!,
-    process.env.METABASE_API_KEY!,
-    Number(process.env.METABASE_DATABASE_ID || 100)
-  )
-  const analyzer = new AnalyzerService(process.env.ANTHROPIC_API_KEY!)
+  // Initialize services (only what we need)
+  const periskope = sourcesToRun.includes('periskope')
+    ? new PeriskopeService(process.env.PERISKOPE_BEARER_TOKEN!)
+    : null
+  const slack = sourcesToRun.includes('slack')
+    ? new SlackService(process.env.SLACK_BOT_TOKEN!)
+    : null
+  const metabase = sourcesToRun.includes('metabase')
+    ? new MetabaseService(
+        process.env.METABASE_URL!,
+        process.env.METABASE_API_KEY!,
+        Number(process.env.METABASE_DATABASE_ID || 100)
+      )
+    : null
+  const analyzer = (sourcesToRun.includes('periskope') || sourcesToRun.includes('slack'))
+    ? new AnalyzerService(process.env.ANTHROPIC_API_KEY!)
+    : null
 
   const TIMEOUT_MS = 300_000 // 5 minutes per source
 
-  // Run all three in parallel with timeouts
-  const results = await Promise.allSettled([
-    // 1. Periskope + Claude analysis
-    // No timeout for Periskope — it runs in background and needs time for 17+ phones
-    (async () => {
+  // Build task list based on requested sources
+  const tasks: Promise<string>[] = []
+
+  if (periskope && analyzer) {
+    // Periskope + Claude analysis (no timeout — needs time for 17+ phones)
+    tasks.push((async () => {
       const rawData = await periskope.fetchDailyData()
 
       // Group data by ops executive (using assigned_to or phone owner)
@@ -121,11 +137,12 @@ export async function runRefresh(trigger: 'cron' | 'manual' = 'manual'): Promise
       }
 
       await writeReport('periskope', today, report)
-      return 'periskope'
-    })(),
+      return 'periskope' as const
+    })())
+  }
 
-    // 2. Slack + Claude analysis
-    withTimeout((async () => {
+  if (slack && analyzer) {
+    tasks.push(withTimeout((async () => {
       const rawData = await slack.fetchDailyData()
       const channelsForAnalysis = rawData.map(ch => ({
         channelName: ch.channelName,
@@ -135,17 +152,21 @@ export async function runRefresh(trigger: 'cron' | 'manual' = 'manual'): Promise
 
       const report = await analyzer.analyzeSlackChannels(channelsForAnalysis)
       await writeReport('slack', today, report)
-      return 'slack'
-    })(), TIMEOUT_MS, 'Slack'),
+      return 'slack' as const
+    })(), TIMEOUT_MS, 'Slack'))
+  }
 
-    // 3. Metabase (no Claude needed - pure data processing)
-    withTimeout((async () => {
+  if (metabase) {
+    tasks.push(withTimeout((async () => {
       const rawData = await metabase.fetchAccountMetrics()
       const report = metabase.buildReport(rawData)
       await writeReport('metabase', today, report)
-      return 'metabase'
-    })(), TIMEOUT_MS, 'Metabase'),
-  ])
+      return 'metabase' as const
+    })(), TIMEOUT_MS, 'Metabase'))
+  }
+
+  // Run selected sources in parallel
+  const results = await Promise.allSettled(tasks)
 
   // Process results
   for (const result of results) {

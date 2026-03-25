@@ -6,6 +6,7 @@ import SummaryCards from "@/components/summary-cards";
 import CollapsibleSection from "@/components/collapsible-section";
 import AlertCard from "@/components/alert-card";
 import PriorityBadge from "@/components/priority-badge";
+import { TabRefreshButton } from "@/components/tab-refresh-button";
 import type { PeriskopeReport } from "@/lib/types";
 
 function WhatsAppPageInner() {
@@ -85,7 +86,10 @@ function WhatsAppPageInner() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-lg font-bold">WhatsApp Alerts</h2>
-        <div className="text-sm text-muted">{date}</div>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-muted">{date}</span>
+          <TabRefreshButton source="periskope" />
+        </div>
       </div>
 
       <SummaryCards

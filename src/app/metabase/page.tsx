@@ -4,6 +4,7 @@ import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import SummaryCards from "@/components/summary-cards";
 import FlagBadge from "@/components/flag-badge";
+import { TabRefreshButton } from "@/components/tab-refresh-button";
 import type { MetabaseReport } from "@/lib/types";
 
 function MetabasePageInner() {
@@ -64,7 +65,10 @@ function MetabasePageInner() {
             {data.projection_note && ` | Proyección: ${data.projection_note}`}
           </p>
         </div>
-        <div className="text-sm text-muted">{date}</div>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-muted">{date}</span>
+          <TabRefreshButton source="metabase" />
+        </div>
       </div>
 
       <SummaryCards
