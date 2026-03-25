@@ -18,18 +18,22 @@ export class PeriskopeService {
     return res.json()
   }
 
-  // Get all connected phones
+  // Get all connected phones with Operations or Support labels
   async getPhones(): Promise<
-    Array<{ phone: string; name: string }>
+    Array<{ phone: string; name: string; labels: string[] }>
   > {
     const data = await this.fetch('/phones/all')
-    // API returns array directly, phone is in org_phone with @c.us suffix
     const raw = Array.isArray(data) ? data : data.data || []
     return raw
-      .filter((p: any) => p.wa_state === 'CONNECTED')
+      .filter((p: any) =>
+        p.wa_state === 'CONNECTED' &&
+        Array.isArray(p.labels) &&
+        p.labels.some((l: string) => ['Operations', 'Support'].includes(l))
+      )
       .map((p: any) => ({
         phone: (p.org_phone || p.phone || '').replace('@c.us', ''),
         name: p.phone_name || p.name || p.org_phone || '',
+        labels: p.labels || [],
       }))
   }
 
@@ -68,59 +72,68 @@ export class PeriskopeService {
     }[]
   > {
     const phones = await this.getPhones()
-    console.log(`[Periskope] Found ${phones.length} connected phones`)
-    const opsPhones = phones // No label filter — include all connected phones
+    console.log(`[Periskope] Found ${phones.length} ops/support phones`)
 
-    const results = []
     const now = Date.now()
     const twentyFourHoursAgo = now - 24 * 60 * 60 * 1000
 
-    for (const phone of opsPhones) {
-      console.log(`[Periskope] Fetching chats for ${phone.name} (${phone.phone})`)
-      const chats = await this.getChats(phone.phone)
-      console.log(`[Periskope] ${phone.name}: ${chats.length} chats`)
-      // Filter to group chats with recent activity
-      const activeGroups = chats.filter((c: any) => {
-        const isGroup = c.chat_id?.endsWith('@g.us')
-        // Use updated_at (not last_message_at)
-        const lastMsg = c.updated_at
-          ? new Date(c.updated_at).getTime()
-          : 0
-        return isGroup && lastMsg > twentyFourHoursAgo
-      })
-      console.log(`[Periskope] ${phone.name}: ${activeGroups.length} active groups (last 24h)`)
+    // Process phones in parallel batches of 5
+    const results: {
+      phone: string
+      phoneName: string
+      groups: Array<{
+        chatId: string
+        chatName: string
+        assignedTo: string | null
+        messages: any[]
+      }>
+    }[] = []
 
-      const groups = []
-      for (const group of activeGroups) {
-        const messages = await this.getChatMessages(
-          phone.phone,
-          group.chat_id,
-          50,
-        )
-        // Filter messages to last 24h
-        const recentMessages = messages.filter((m: any) => {
-          const ts = new Date(m.timestamp || m.created_at).getTime()
-          return ts > twentyFourHoursAgo
+    for (let i = 0; i < phones.length; i += 5) {
+      const batch = phones.slice(i, i + 5)
+      const batchResults = await Promise.all(
+        batch.map(async (phone) => {
+          try {
+            console.log(`[Periskope] Fetching chats for ${phone.name}`)
+            const chats = await this.getChats(phone.phone)
+            const activeGroups = chats.filter((c: any) => {
+              const isGroup = c.chat_id?.endsWith('@g.us')
+              const lastMsg = c.updated_at ? new Date(c.updated_at).getTime() : 0
+              return isGroup && lastMsg > twentyFourHoursAgo
+            })
+
+            const groups = []
+            for (const group of activeGroups) {
+              const messages = await this.getChatMessages(phone.phone, group.chat_id, 50)
+              const recentMessages = messages.filter((m: any) => {
+                const ts = new Date(m.timestamp || m.created_at).getTime()
+                return ts > twentyFourHoursAgo
+              })
+              if (recentMessages.length > 0) {
+                groups.push({
+                  chatId: group.chat_id,
+                  chatName: group.chat_name || group.name || group.chat_id,
+                  assignedTo: group.assigned_to || null,
+                  messages: recentMessages,
+                })
+              }
+            }
+
+            console.log(`[Periskope] ${phone.name}: ${activeGroups.length} active groups, ${groups.length} with messages`)
+            if (groups.length > 0) {
+              return { phone: phone.phone, phoneName: phone.name, groups }
+            }
+            return null
+          } catch (e: any) {
+            console.error(`[Periskope] Error for ${phone.name}: ${e.message}`)
+            return null
+          }
         })
-
-        if (recentMessages.length > 0) {
-          groups.push({
-            chatId: group.chat_id,
-            chatName: group.chat_name || group.name || group.chat_id,
-            assignedTo: group.assigned_to || null,
-            messages: recentMessages,
-          })
-        }
-      }
-
-      if (groups.length > 0) {
-        results.push({
-          phone: phone.phone,
-          phoneName: phone.name,
-          groups,
-        })
-      }
+      )
+      results.push(...batchResults.filter(Boolean) as typeof results)
     }
+
+    console.log(`[Periskope] Total: ${results.length} phones with active groups`)
     return results
   }
 }
