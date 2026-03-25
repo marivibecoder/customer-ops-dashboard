@@ -7,7 +7,7 @@ export class PeriskopeService {
     this.baseUrl = baseUrl
   }
 
-  private async fetch(path: string, phone?: string) {
+  private async apiFetch(path: string, phone?: string) {
     const headers: Record<string, string> = {
       'Authorization': `Bearer ${this.token}`,
       'Content-Type': 'application/json',
@@ -18,122 +18,182 @@ export class PeriskopeService {
     return res.json()
   }
 
-  // Get all connected phones with Operations or Support labels
-  async getPhones(): Promise<
-    Array<{ phone: string; name: string; labels: string[] }>
-  > {
-    const data = await this.fetch('/phones/all')
-    const raw = Array.isArray(data) ? data : data.data || []
-    return raw
+  // Get all connected ops/support phones + build Darwin phone set
+  async getPhones(): Promise<{
+    opsPhones: Array<{ phone: string; name: string }>
+    darwinPhones: Set<string>
+    phoneToName: Record<string, string>
+  }> {
+    const raw = await this.apiFetch('/phones/all')
+    const allPhones = Array.isArray(raw) ? raw : raw.data || []
+
+    // Build set of ALL Darwin phone numbers for sender identification
+    const darwinPhones = new Set<string>()
+    const phoneToName: Record<string, string> = {}
+    for (const p of allPhones) {
+      const phone = (p.org_phone || '').replace('@c.us', '')
+      darwinPhones.add(phone)
+      phoneToName[phone] = p.phone_name || phone
+    }
+
+    const opsPhones = allPhones
       .filter((p: any) =>
         p.wa_state === 'CONNECTED' &&
         Array.isArray(p.labels) &&
         p.labels.some((l: string) => ['Operations', 'Support'].includes(l))
       )
       .map((p: any) => ({
-        phone: (p.org_phone || p.phone || '').replace('@c.us', ''),
-        name: p.phone_name || p.name || p.org_phone || '',
-        labels: p.labels || [],
+        phone: (p.org_phone || '').replace('@c.us', ''),
+        name: p.phone_name || p.org_phone || '',
       }))
+
+    return { opsPhones, darwinPhones, phoneToName }
   }
 
-  // Get chats for a phone
-  async getChats(phone: string): Promise<any[]> {
-    const data = await this.fetch('/chats?limit=100', phone)
-    // API returns {chats: [...]} not {data: [...]}
-    return data.chats || data.data || (Array.isArray(data) ? data : [])
-  }
+  // Main method: fetch all data with deduplication (same logic as MCP)
+  async fetchDailyData(): Promise<{
+    phone: string
+    phoneName: string
+    groups: Array<{
+      chatId: string
+      chatName: string
+      assignedTo: string | null
+      messages: any[]
+    }>
+  }[]> {
+    const { opsPhones, darwinPhones, phoneToName } = await this.getPhones()
+    console.log(`[Periskope] Found ${opsPhones.length} ops/support phones`)
 
-  // Get messages for a chat
-  async getChatMessages(
-    phone: string,
-    chatId: string,
-    limit = 50,
-  ): Promise<any[]> {
-    const data = await this.fetch(
-      `/chats/${chatId}/messages?limit=${limit}`,
-      phone,
-    )
-    // API returns {messages: [...]} or {data: [...]}
-    return data.messages || data.data || (Array.isArray(data) ? data : [])
-  }
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
 
-  // Main method: fetch all data for daily report
-  async fetchDailyData(): Promise<
-    {
-      phone: string
-      phoneName: string
-      groups: Array<{
-        chatId: string
-        chatName: string
-        assignedTo: string | null
-        messages: any[]
-      }>
-    }[]
-  > {
-    const phones = await this.getPhones()
-    console.log(`[Periskope] Found ${phones.length} ops/support phones`)
+    // Phase 1: Collect all groups, DEDUPLICATING across phones
+    // Key: chat_id -> group data (only fetch messages ONCE per group)
+    const groupMap = new Map<string, {
+      chatId: string
+      chatName: string
+      assignedTo: string | null
+      messages: any[]
+      phonesWithAccess: Array<{ phone: string; name: string }>
+    }>()
 
-    const now = Date.now()
-    const twentyFourHoursAgo = now - 24 * 60 * 60 * 1000
+    for (const opsPhone of opsPhones) {
+      try {
+        console.log(`[Periskope] Fetching chats for ${opsPhone.name}`)
+        const data = await this.apiFetch('/chats?limit=200', opsPhone.phone)
+        const chats = data.chats || data.data || (Array.isArray(data) ? data : [])
+        const groups = chats.filter((c: any) => c.chat_type === 'group' || c.chat_id?.endsWith('@g.us'))
 
-    // Process phones in parallel batches of 5
-    const results: {
-      phone: string
-      phoneName: string
-      groups: Array<{
-        chatId: string
-        chatName: string
-        assignedTo: string | null
-        messages: any[]
-      }>
-    }[] = []
-
-    for (let i = 0; i < phones.length; i += 5) {
-      const batch = phones.slice(i, i + 5)
-      const batchResults = await Promise.all(
-        batch.map(async (phone) => {
-          try {
-            console.log(`[Periskope] Fetching chats for ${phone.name}`)
-            const chats = await this.getChats(phone.phone)
-            const activeGroups = chats.filter((c: any) => {
-              const isGroup = c.chat_id?.endsWith('@g.us')
-              const lastMsg = c.updated_at ? new Date(c.updated_at).getTime() : 0
-              return isGroup && lastMsg > twentyFourHoursAgo
-            })
-
-            const groups = []
-            for (const group of activeGroups) {
-              const messages = await this.getChatMessages(phone.phone, group.chat_id, 50)
-              const recentMessages = messages.filter((m: any) => {
-                const ts = new Date(m.timestamp || m.created_at).getTime()
-                return ts > twentyFourHoursAgo
-              })
-              if (recentMessages.length > 0) {
-                groups.push({
-                  chatId: group.chat_id,
-                  chatName: group.chat_name || group.name || group.chat_id,
-                  assignedTo: group.assigned_to || null,
-                  messages: recentMessages,
+        for (const g of groups) {
+          if (!groupMap.has(g.chat_id)) {
+            // First time seeing this group — fetch messages
+            let recentMessages: any[] = []
+            try {
+              const msgData = await this.apiFetch(`/chats/${g.chat_id}/messages?limit=100`, opsPhone.phone)
+              const allMsgs = msgData.messages || msgData.data || (Array.isArray(msgData) ? msgData : [])
+              recentMessages = allMsgs
+                .filter((m: any) => (m.timestamp || m.created_at) >= cutoff)
+                .map((m: any) => {
+                  const senderPhone = (m.sender_phone || '').replace('@c.us', '')
+                  const isDarwin = darwinPhones.has(senderPhone)
+                  return {
+                    sender_phone: senderPhone,
+                    sender_name: isDarwin ? (phoneToName[senderPhone] || senderPhone) : senderPhone,
+                    is_darwin: isDarwin,
+                    from_me: m.from_me || false,
+                    role: isDarwin ? 'DARWIN' : 'CLIENT',
+                    body: m.body || '',
+                    timestamp: m.timestamp || m.created_at,
+                    type: m.message_type,
+                  }
                 })
-              }
+            } catch {
+              // skip on error
             }
 
-            console.log(`[Periskope] ${phone.name}: ${activeGroups.length} active groups, ${groups.length} with messages`)
-            if (groups.length > 0) {
-              return { phone: phone.phone, phoneName: phone.name, groups }
+            groupMap.set(g.chat_id, {
+              chatId: g.chat_id,
+              chatName: g.chat_name || g.chat_id,
+              assignedTo: g.assigned_to || null,
+              messages: recentMessages,
+              phonesWithAccess: [{ phone: opsPhone.phone, name: opsPhone.name }],
+            })
+          } else {
+            // Already seen — just add this phone as having access
+            const existing = groupMap.get(g.chat_id)!
+            existing.phonesWithAccess.push({ phone: opsPhone.phone, name: opsPhone.name })
+            if (g.assigned_to && !existing.assignedTo) {
+              existing.assignedTo = g.assigned_to
             }
-            return null
-          } catch (e: any) {
-            console.error(`[Periskope] Error for ${phone.name}: ${e.message}`)
-            return null
           }
-        })
-      )
-      results.push(...batchResults.filter(Boolean) as typeof results)
+        }
+      } catch (e: any) {
+        console.error(`[Periskope] Error for ${opsPhone.name}: ${e.message}`)
+      }
     }
 
-    console.log(`[Periskope] Total: ${results.length} phones with active groups`)
+    // Phase 2: Organize by ops executive (same as MCP)
+    const opsResults = new Map<string, {
+      phone: string
+      phoneName: string
+      groups: Array<{
+        chatId: string
+        chatName: string
+        assignedTo: string | null
+        messages: any[]
+      }>
+    }>()
+
+    // Initialize all ops
+    for (const p of opsPhones) {
+      if (!opsResults.has(p.name)) {
+        opsResults.set(p.name, { phone: p.phone, phoneName: p.name, groups: [] })
+      }
+    }
+
+    for (const [, group] of groupMap) {
+      if (group.messages.length === 0) continue
+
+      if (group.assignedTo) {
+        // Match assigned_to email to ops name
+        const emailPrefix = group.assignedTo.split('@')[0].toLowerCase()
+        let matchedOps: string | null = null
+        for (const [opsName] of opsResults) {
+          const nameLower = opsName.toLowerCase()
+          if (nameLower.includes(emailPrefix) || emailPrefix.includes(nameLower.split(' ')[0].toLowerCase())) {
+            matchedOps = opsName
+            break
+          }
+        }
+
+        if (matchedOps) {
+          opsResults.get(matchedOps)!.groups.push({
+            chatId: group.chatId,
+            chatName: group.chatName,
+            assignedTo: group.assignedTo,
+            messages: group.messages,
+          })
+        }
+      } else {
+        // No assigned_to — add to all ops that have access (shared)
+        for (const accessPhone of group.phonesWithAccess) {
+          const ops = opsResults.get(accessPhone.name)
+          if (ops) {
+            ops.groups.push({
+              chatId: group.chatId,
+              chatName: group.chatName,
+              assignedTo: null,
+              messages: group.messages,
+            })
+          }
+        }
+      }
+    }
+
+    const results = Array.from(opsResults.values()).filter(r => r.groups.length > 0)
+    const totalGroups = new Set(Array.from(groupMap.keys())).size
+    const activeGroups = Array.from(groupMap.values()).filter(g => g.messages.length > 0).length
+    console.log(`[Periskope] Done: ${totalGroups} unique groups, ${activeGroups} with messages, ${results.length} ops with activity`)
+
     return results
   }
 }

@@ -53,7 +53,8 @@ export async function runRefresh(trigger: 'cron' | 'manual' = 'manual'): Promise
   // Run all three in parallel with timeouts
   const results = await Promise.allSettled([
     // 1. Periskope + Claude analysis
-    withTimeout((async () => {
+    // No timeout for Periskope — it runs in background and needs time for 17+ phones
+    (async () => {
       const rawData = await periskope.fetchDailyData()
 
       // Group data by ops executive (using assigned_to or phone owner)
@@ -121,7 +122,7 @@ export async function runRefresh(trigger: 'cron' | 'manual' = 'manual'): Promise
 
       await writeReport('periskope', today, report)
       return 'periskope'
-    })(), TIMEOUT_MS, 'Periskope'),
+    })(),
 
     // 2. Slack + Claude analysis
     withTimeout((async () => {
