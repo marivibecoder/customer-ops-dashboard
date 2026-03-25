@@ -132,6 +132,10 @@ export class PeriskopeService {
     }
 
     // Phase 2: Organize by ops executive (same as MCP)
+    // Normalize name to deduplicate across phones
+    const normalizeName = (name: string) => name.trim().toLowerCase()
+    const canonicalNames = new Map<string, string>() // normalized -> first seen form
+
     const opsResults = new Map<string, {
       phone: string
       phoneName: string
@@ -143,11 +147,19 @@ export class PeriskopeService {
       }>
     }>()
 
-    // Initialize all ops
+    // Initialize all ops, deduplicating by normalized name
     for (const p of opsPhones) {
-      if (!opsResults.has(p.name)) {
+      const norm = normalizeName(p.name)
+      if (!canonicalNames.has(norm)) {
+        canonicalNames.set(norm, p.name)
         opsResults.set(p.name, { phone: p.phone, phoneName: p.name, groups: [] })
       }
+    }
+
+    // Helper to find canonical ops name
+    const findOpsKey = (name: string): string | null => {
+      const norm = normalizeName(name)
+      return canonicalNames.get(norm) || null
     }
 
     for (const [, group] of groupMap) {
@@ -175,8 +187,12 @@ export class PeriskopeService {
         }
       } else {
         // No assigned_to — add to all ops that have access (shared)
+        const addedToOps = new Set<string>()
         for (const accessPhone of group.phonesWithAccess) {
-          const ops = opsResults.get(accessPhone.name)
+          const canonicalKey = findOpsKey(accessPhone.name)
+          if (!canonicalKey || addedToOps.has(canonicalKey)) continue
+          addedToOps.add(canonicalKey)
+          const ops = opsResults.get(canonicalKey)
           if (ops) {
             ops.groups.push({
               chatId: group.chatId,
