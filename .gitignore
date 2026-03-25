@@ -46,3 +46,4 @@ next-env.d.ts
 /data/slack/*.json
 /data/metabase/*.json
 !/data/mappings.json
+.env.local

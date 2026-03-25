@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Geist } from "next/font/google";
 import "./globals.css";
 import Nav from "@/components/nav";
+import { Suspense } from "react";
+import { DateRefreshBar } from "@/components/date-refresh-bar";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -29,6 +31,9 @@ export default function RootLayout({
             <p className="text-sm text-muted">Darwin AI — WhatsApp, Slack, Metabase</p>
           </div>
         </header>
+        <Suspense fallback={null}>
+          <DateRefreshBar />
+        </Suspense>
         <Nav />
         <main className="flex-1 max-w-7xl mx-auto w-full px-6 py-6">
           {children}

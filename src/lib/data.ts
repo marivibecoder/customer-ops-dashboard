@@ -1,45 +1,40 @@
-import { promises as fs } from 'fs';
-import path from 'path';
-import { PeriskopeReport, SlackReport, MetabaseReport, MappingsFile } from './types';
+import { supabase } from '@/lib/supabase'
+import type { PeriskopeReport, SlackReport, MetabaseReport, ClientMapping } from '@/lib/types'
 
-// In production (Railway without volume), use /tmp for writable storage.
-// Data uploaded via /api/upload persists until next deploy.
-// Locally, use the project's data/ directory.
-const DATA_DIR = process.env.DATA_DIR || (
-  process.env.NODE_ENV === 'production'
-    ? '/tmp/dashboard-data'
-    : path.join(process.cwd(), 'data')
-);
+export type MappingsFile = Record<string, ClientMapping>
 
 export async function readReport<T>(source: string, date: string): Promise<T | null> {
-  try {
-    const filePath = path.join(DATA_DIR, source, `${date}.json`);
-    const content = await fs.readFile(filePath, 'utf-8');
-    return JSON.parse(content) as T;
-  } catch {
-    return null;
-  }
+  const { data, error } = await supabase
+    .from('reports')
+    .select('data')
+    .eq('source', source)
+    .eq('report_date', date)
+    .single()
+
+  if (error || !data) return null
+  return data.data as T
 }
 
 export async function writeReport(source: string, date: string, data: unknown): Promise<void> {
-  const dir = path.join(DATA_DIR, source);
-  await fs.mkdir(dir, { recursive: true });
-  const filePath = path.join(dir, `${date}.json`);
-  await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+  const { error } = await supabase
+    .from('reports')
+    .upsert(
+      { source, report_date: date, data, updated_at: new Date().toISOString() },
+      { onConflict: 'source,report_date' },
+    )
+
+  if (error) throw new Error(`Failed to write report: ${error.message}`)
 }
 
 export async function listDates(source: string): Promise<string[]> {
-  try {
-    const dir = path.join(DATA_DIR, source);
-    const files = await fs.readdir(dir);
-    return files
-      .filter(f => f.endsWith('.json'))
-      .map(f => f.replace('.json', ''))
-      .sort()
-      .reverse();
-  } catch {
-    return [];
-  }
+  const { data, error } = await supabase
+    .from('reports')
+    .select('report_date')
+    .eq('source', source)
+    .order('report_date', { ascending: false })
+
+  if (error || !data) return []
+  return data.map((row) => row.report_date)
 }
 
 export async function listAllDates(): Promise<Record<string, string[]>> {
@@ -47,38 +42,59 @@ export async function listAllDates(): Promise<Record<string, string[]>> {
     listDates('periskope'),
     listDates('slack'),
     listDates('metabase'),
-  ]);
-  return { periskope, slack, metabase };
+  ])
+  return { periskope, slack, metabase }
 }
 
 export async function readMappings(): Promise<MappingsFile> {
-  try {
-    const filePath = path.join(DATA_DIR, 'mappings.json');
-    const content = await fs.readFile(filePath, 'utf-8');
-    return JSON.parse(content);
-  } catch {
-    return {};
+  const { data, error } = await supabase
+    .from('client_mappings')
+    .select('*')
+
+  if (error || !data) return {}
+
+  const mappings: MappingsFile = {}
+  for (const row of data) {
+    mappings[row.client_id] = {
+      display_name: row.display_name,
+      whatsapp_groups: row.whatsapp_groups ?? [],
+      slack_channels: row.slack_channels ?? [],
+      metabase_account: row.metabase_account,
+    }
   }
+  return mappings
 }
 
 export async function writeMappings(mappings: MappingsFile): Promise<void> {
-  const filePath = path.join(DATA_DIR, 'mappings.json');
-  await fs.writeFile(filePath, JSON.stringify(mappings, null, 2), 'utf-8');
+  const rows = Object.entries(mappings).map(([client_id, mapping]) => ({
+    client_id,
+    display_name: mapping.display_name,
+    whatsapp_groups: mapping.whatsapp_groups,
+    slack_channels: mapping.slack_channels,
+    metabase_account: mapping.metabase_account,
+    updated_at: new Date().toISOString(),
+  }))
+
+  const { error } = await supabase
+    .from('client_mappings')
+    .upsert(rows, { onConflict: 'client_id' })
+
+  if (error) throw new Error(`Failed to write mappings: ${error.message}`)
 }
 
 export async function getLatestDate(source: string): Promise<string | null> {
-  const dates = await listDates(source);
-  return dates[0] || null;
+  const dates = await listDates(source)
+  return dates[0] || null
 }
 
 export function getPeriskopeReport(date: string) {
-  return readReport<PeriskopeReport>('periskope', date);
+  return readReport<PeriskopeReport>('periskope', date)
 }
 
 export function getSlackReport(date: string) {
-  return readReport<SlackReport>('slack', date);
+  return readReport<SlackReport>('slack', date)
 }
 
 export function getMetabaseReport(date: string) {
-  return readReport<MetabaseReport>('metabase', date);
+  return readReport<MetabaseReport>('metabase', date)
 }
