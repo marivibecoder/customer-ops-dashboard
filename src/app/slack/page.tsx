@@ -12,6 +12,10 @@ function SlackPageInner() {
 
   const [data, setData] = useState<SlackReport | null>(null);
   const [loading, setLoading] = useState(true);
+  const [riskFilter, setRiskFilter] = useState<string>("");
+  const [activityFilter, setActivityFilter] = useState<string>("");
+  const [interventionFilter, setInterventionFilter] = useState<string>("");
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     fetch(`/api/data/slack?date=${date}`)
@@ -30,12 +34,52 @@ function SlackPageInner() {
     return (
       <div className="text-center py-20 text-muted">
         No hay datos de Slack para {date}.
-        <br />
-        <span className="text-xs">
-          El scheduled task de Slack debe generar un JSON para esta fecha.
-        </span>
       </div>
     );
+
+  // Extract unique risk flags
+  const allRiskFlags = [
+    ...new Set(
+      data.channels.flatMap((ch) =>
+        ch.highlights.map((h) => h.risk_flag).filter(Boolean)
+      )
+    ),
+  ].sort();
+
+  // Filter channels
+  const filteredChannels = data.channels.filter((ch) => {
+    // Search filter
+    if (
+      search &&
+      !ch.name.toLowerCase().includes(search.toLowerCase()) &&
+      !ch.topic?.toLowerCase().includes(search.toLowerCase()) &&
+      !ch.highlights.some(
+        (h) =>
+          h.summary.toLowerCase().includes(search.toLowerCase()) ||
+          h.detail?.toLowerCase().includes(search.toLowerCase())
+      )
+    )
+      return false;
+
+    // Activity filter
+    if (activityFilter && ch.activity_level !== activityFilter) return false;
+
+    // Risk flag filter
+    if (riskFilter) {
+      const hasFlag = ch.highlights.some((h) => h.risk_flag === riskFilter);
+      if (!hasFlag) return false;
+    }
+
+    // Intervention filter
+    if (interventionFilter === "yes") {
+      const needsIntervention = ch.highlights.some(
+        (h) => h.intervention_needed
+      );
+      if (!needsIntervention) return false;
+    }
+
+    return true;
+  });
 
   return (
     <div>
@@ -74,8 +118,58 @@ function SlackPageInner() {
         ]}
       />
 
+      {/* Filters */}
+      <div className="flex gap-3 mb-6 flex-wrap">
+        <select
+          value={riskFilter}
+          onChange={(e) => setRiskFilter(e.target.value)}
+          className="px-3 py-2 border border-border rounded-lg text-sm bg-surface"
+        >
+          <option value="">Todos los riesgos</option>
+          {allRiskFlags.map((f) => (
+            <option key={f ?? "unknown"} value={f ?? ""}>
+              {f === "churn_risk"
+                ? "🔴 Churn Risk"
+                : f === "escalation"
+                  ? "🟠 Escalation"
+                  : f === "blocker"
+                    ? "🟡 Blocker"
+                    : f}
+            </option>
+          ))}
+        </select>
+        <select
+          value={activityFilter}
+          onChange={(e) => setActivityFilter(e.target.value)}
+          className="px-3 py-2 border border-border rounded-lg text-sm bg-surface"
+        >
+          <option value="">Toda actividad</option>
+          <option value="high">🔴 Alta actividad</option>
+          <option value="medium">🟠 Media actividad</option>
+          <option value="low">🟢 Baja actividad</option>
+        </select>
+        <select
+          value={interventionFilter}
+          onChange={(e) => setInterventionFilter(e.target.value)}
+          className="px-3 py-2 border border-border rounded-lg text-sm bg-surface"
+        >
+          <option value="">Todos</option>
+          <option value="yes">⚠️ Requiere intervención</option>
+        </select>
+        <input
+          type="text"
+          placeholder="Buscar canal o tema..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="px-3 py-2 border border-border rounded-lg text-sm bg-surface w-64"
+        />
+        <span className="text-xs text-muted self-center">
+          {filteredChannels.length} de {data.channels.length} canales
+        </span>
+      </div>
+
       <div className="space-y-4">
-        {data.channels.map((channel) => (
+        {filteredChannels.map((channel) => (
           <div
             key={channel.name}
             className="bg-surface border border-border rounded-xl shadow-sm overflow-hidden"
@@ -109,7 +203,9 @@ function SlackPageInner() {
                   <div
                     key={i}
                     className={`bg-background border border-border rounded-lg p-3 ${
-                      h.intervention_needed ? "border-l-[3px] border-l-accent" : ""
+                      h.intervention_needed
+                        ? "border-l-[3px] border-l-accent"
+                        : ""
                     }`}
                   >
                     <p className="text-sm font-medium">{h.summary}</p>

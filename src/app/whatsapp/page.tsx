@@ -15,6 +15,10 @@ function WhatsAppPageInner() {
 
   const [data, setData] = useState<PeriskopeReport | null>(null);
   const [loading, setLoading] = useState(true);
+  const [opsFilter, setOpsFilter] = useState<string>("");
+  const [priorityFilter, setPriorityFilter] = useState<string>("");
+  const [typeFilter, setTypeFilter] = useState<string>("");
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     fetch(`/api/data/periskope?date=${date}`)
@@ -35,6 +39,43 @@ function WhatsAppPageInner() {
         No hay datos de WhatsApp para {date}
       </div>
     );
+
+  // Extract unique values for filters
+  const opsNames = data.ops_executives.map((o) => o.name).sort();
+  const allAlertTypes = [
+    ...new Set(
+      data.ops_executives.flatMap((o) => o.alerts.map((a) => a.type))
+    ),
+  ].sort();
+
+  // Filter ops executives and their alerts
+  const filteredOps = data.ops_executives
+    .filter((ops) => !opsFilter || ops.name === opsFilter)
+    .map((ops) => ({
+      ...ops,
+      alerts: ops.alerts.filter((a) => {
+        if (priorityFilter && a.priority !== priorityFilter) return false;
+        if (typeFilter && a.type !== typeFilter) return false;
+        if (
+          search &&
+          !a.group_name.toLowerCase().includes(search.toLowerCase()) &&
+          !a.client_name?.toLowerCase().includes(search.toLowerCase()) &&
+          !a.detail.toLowerCase().includes(search.toLowerCase())
+        )
+          return false;
+        return true;
+      }),
+    }))
+    .filter((ops) => ops.alerts.length > 0 || (!priorityFilter && !typeFilter && !search));
+
+  const totalFiltered = filteredOps.reduce(
+    (sum, ops) => sum + ops.alerts.length,
+    0
+  );
+  const totalAlerts = data.ops_executives.reduce(
+    (sum, ops) => sum + ops.alerts.length,
+    0
+  );
 
   return (
     <div>
@@ -66,7 +107,55 @@ function WhatsAppPageInner() {
         ]}
       />
 
-      {data.ops_executives.map((ops) => {
+      {/* Filters */}
+      <div className="flex gap-3 mb-6 flex-wrap">
+        <select
+          value={opsFilter}
+          onChange={(e) => setOpsFilter(e.target.value)}
+          className="px-3 py-2 border border-border rounded-lg text-sm bg-surface"
+        >
+          <option value="">Todos los ops</option>
+          {opsNames.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
+        <select
+          value={priorityFilter}
+          onChange={(e) => setPriorityFilter(e.target.value)}
+          className="px-3 py-2 border border-border rounded-lg text-sm bg-surface"
+        >
+          <option value="">Todas las prioridades</option>
+          <option value="alta">🔴 Alta</option>
+          <option value="media">🟠 Media</option>
+          <option value="baja">🟢 Baja</option>
+        </select>
+        <select
+          value={typeFilter}
+          onChange={(e) => setTypeFilter(e.target.value)}
+          className="px-3 py-2 border border-border rounded-lg text-sm bg-surface"
+        >
+          <option value="">Todos los tipos</option>
+          {allAlertTypes.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+        <input
+          type="text"
+          placeholder="Buscar grupo o cliente..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="px-3 py-2 border border-border rounded-lg text-sm bg-surface w-64"
+        />
+        <span className="text-xs text-muted self-center">
+          {totalFiltered} de {totalAlerts} alertas
+        </span>
+      </div>
+
+      {filteredOps.map((ops) => {
         const alta = ops.alerts.filter((a) => a.priority === "alta").length;
         const media = ops.alerts.filter((a) => a.priority === "media").length;
         const baja = ops.alerts.filter((a) => a.priority === "baja").length;
@@ -92,9 +181,7 @@ function WhatsAppPageInner() {
             }
           >
             {ops.alerts.length === 0 ? (
-              <p className="text-sm text-muted py-2">
-                ✅ Sin alertas
-              </p>
+              <p className="text-sm text-muted py-2">✅ Sin alertas</p>
             ) : (
               ops.alerts
                 .sort((a, b) => {
