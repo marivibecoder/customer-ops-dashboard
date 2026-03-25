@@ -36,7 +36,8 @@ export class PeriskopeService {
   // Get chats for a phone
   async getChats(phone: string): Promise<any[]> {
     const data = await this.fetch('/chats?limit=100', phone)
-    return data.data || []
+    // API returns {chats: [...]} not {data: [...]}
+    return data.chats || data.data || (Array.isArray(data) ? data : [])
   }
 
   // Get messages for a chat
@@ -49,7 +50,8 @@ export class PeriskopeService {
       `/chats/${chatId}/messages?limit=${limit}`,
       phone,
     )
-    return data.data || []
+    // API returns {messages: [...]} or {data: [...]}
+    return data.messages || data.data || (Array.isArray(data) ? data : [])
   }
 
   // Main method: fetch all data for daily report
@@ -80,12 +82,13 @@ export class PeriskopeService {
       // Filter to group chats with recent activity
       const activeGroups = chats.filter((c: any) => {
         const isGroup = c.chat_id?.endsWith('@g.us')
-        // Check if last message is within 24h
-        const lastMsg = c.last_message_at
-          ? new Date(c.last_message_at).getTime()
+        // Use updated_at (not last_message_at)
+        const lastMsg = c.updated_at
+          ? new Date(c.updated_at).getTime()
           : 0
         return isGroup && lastMsg > twentyFourHoursAgo
       })
+      console.log(`[Periskope] ${phone.name}: ${activeGroups.length} active groups (last 24h)`)
 
       const groups = []
       for (const group of activeGroups) {
@@ -103,7 +106,7 @@ export class PeriskopeService {
         if (recentMessages.length > 0) {
           groups.push({
             chatId: group.chat_id,
-            chatName: group.name || group.chat_id,
+            chatName: group.chat_name || group.name || group.chat_id,
             assignedTo: group.assigned_to || null,
             messages: recentMessages,
           })
