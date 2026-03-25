@@ -20,10 +20,17 @@ export class PeriskopeService {
 
   // Get all connected phones
   async getPhones(): Promise<
-    Array<{ phone: string; name: string; wa_state: string; labels: string[] }>
+    Array<{ phone: string; name: string }>
   > {
     const data = await this.fetch('/phones/all')
-    return data.data?.filter((p: any) => p.wa_state === 'CONNECTED') || []
+    // API returns array directly, phone is in org_phone with @c.us suffix
+    const raw = Array.isArray(data) ? data : data.data || []
+    return raw
+      .filter((p: any) => p.wa_state === 'CONNECTED')
+      .map((p: any) => ({
+        phone: (p.org_phone || p.phone || '').replace('@c.us', ''),
+        name: p.phone_name || p.name || p.org_phone || '',
+      }))
   }
 
   // Get chats for a phone
@@ -59,17 +66,17 @@ export class PeriskopeService {
     }[]
   > {
     const phones = await this.getPhones()
-    // Filter to ops/support phones (labels contain 'Operations' or 'Support')
-    const opsPhones = phones.filter((p) =>
-      p.labels?.some((l: string) => ['Operations', 'Support'].includes(l)),
-    )
+    console.log(`[Periskope] Found ${phones.length} connected phones`)
+    const opsPhones = phones // No label filter — include all connected phones
 
     const results = []
     const now = Date.now()
     const twentyFourHoursAgo = now - 24 * 60 * 60 * 1000
 
     for (const phone of opsPhones) {
+      console.log(`[Periskope] Fetching chats for ${phone.name} (${phone.phone})`)
       const chats = await this.getChats(phone.phone)
+      console.log(`[Periskope] ${phone.name}: ${chats.length} chats`)
       // Filter to group chats with recent activity
       const activeGroups = chats.filter((c: any) => {
         const isGroup = c.chat_id?.endsWith('@g.us')
