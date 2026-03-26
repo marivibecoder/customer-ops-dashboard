@@ -3,11 +3,14 @@
 import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import SummaryCards from "@/components/summary-cards";
-import CollapsibleSection from "@/components/collapsible-section";
 import AlertCard from "@/components/alert-card";
-import PriorityBadge from "@/components/priority-badge";
 import { TabRefreshButton } from "@/components/tab-refresh-button";
-import type { PeriskopeReport } from "@/lib/types";
+import type { PeriskopeReport, PeriskopeAlert } from "@/lib/types";
+
+interface FlatAlert extends PeriskopeAlert {
+  ops_name: string;
+  ops_email: string | undefined;
+}
 
 function WhatsAppPageInner() {
   const searchParams = useSearchParams();
@@ -41,52 +44,42 @@ function WhatsAppPageInner() {
       </div>
     );
 
+  // Flatten all alerts into a single list
+  const allAlerts: FlatAlert[] = data.ops_executives.flatMap((ops) =>
+    ops.alerts.map((a) => ({
+      ...a,
+      ops_name: ops.name,
+      ops_email: ops.email,
+    }))
+  );
+
   // Extract unique values for filters
-  const opsNames = data.ops_executives.map((o) => o.name).sort();
-  const allAlertTypes = [
-    ...new Set(
-      data.ops_executives.flatMap((o) => o.alerts.map((a) => a.type))
-    ),
-  ].sort();
+  const opsNames = [...new Set(allAlerts.map((a) => a.ops_name))].sort();
+  const allAlertTypes = [...new Set(allAlerts.map((a) => a.type))].sort();
 
-  // Filter ops executives and their alerts
-  const hasActiveFilters = !!(priorityFilter || typeFilter || search);
+  // Apply filters
+  const filtered = allAlerts.filter((a) => {
+    if (opsFilter && a.ops_name !== opsFilter) return false;
+    if (priorityFilter && a.priority !== priorityFilter) return false;
+    if (typeFilter && a.type !== typeFilter) return false;
+    if (search) {
+      const s = search.toLowerCase();
+      if (
+        !a.group_name.toLowerCase().includes(s) &&
+        !(a.client_name || "").toLowerCase().includes(s) &&
+        !a.detail.toLowerCase().includes(s) &&
+        !a.ops_name.toLowerCase().includes(s)
+      )
+        return false;
+    }
+    return true;
+  });
 
-  const filteredOps: typeof data.ops_executives = [];
-  for (const ops of data.ops_executives) {
-    // Filter by ops name
-    if (opsFilter && ops.name !== opsFilter) continue;
-
-    // Filter alerts
-    const matchingAlerts = ops.alerts.filter((a) => {
-      if (priorityFilter && a.priority !== priorityFilter) return false;
-      if (typeFilter && a.type !== typeFilter) return false;
-      if (search) {
-        const s = search.toLowerCase();
-        if (
-          !a.group_name.toLowerCase().includes(s) &&
-          !(a.client_name || "").toLowerCase().includes(s) &&
-          !a.detail.toLowerCase().includes(s)
-        )
-          return false;
-      }
-      return true;
-    });
-
-    // If filters are active, only show ops with matching alerts
-    if (hasActiveFilters && matchingAlerts.length === 0) continue;
-
-    filteredOps.push({ ...ops, alerts: matchingAlerts });
-  }
-
-  const totalFiltered = filteredOps.reduce(
-    (sum, ops) => sum + ops.alerts.length,
-    0
-  );
-  const totalAlerts = data.ops_executives.reduce(
-    (sum, ops) => sum + ops.alerts.length,
-    0
-  );
+  // Sort: alta first, then media, then baja
+  const sorted = filtered.sort((a, b) => {
+    const order: Record<string, number> = { alta: 0, media: 1, baja: 2 };
+    return (order[a.priority] ?? 3) - (order[b.priority] ?? 3);
+  });
 
   return (
     <div>
@@ -159,67 +152,45 @@ function WhatsAppPageInner() {
         </select>
         <input
           type="text"
-          placeholder="Buscar grupo o cliente..."
+          placeholder="Buscar grupo, cliente u ops..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="px-3 py-2 border border-border rounded-lg text-sm bg-surface w-64"
         />
         <span className="text-xs text-muted self-center">
-          {totalFiltered} de {totalAlerts} alertas
+          {filtered.length} de {allAlerts.length} alertas
         </span>
       </div>
 
-      {filteredOps.map((ops) => {
-        const alta = ops.alerts.filter((a) => a.priority === "alta").length;
-        const media = ops.alerts.filter((a) => a.priority === "media").length;
-        const baja = ops.alerts.filter((a) => a.priority === "baja").length;
-        const initials = ops.name
-          .split(" ")
-          .slice(0, 2)
-          .map((w) => w[0]?.toUpperCase() || "")
-          .join("");
-
-        return (
-          <CollapsibleSection
-            key={ops.name}
-            title={ops.name}
-            subtitle={`${ops.alerts.length} alerta${ops.alerts.length !== 1 ? "s" : ""}`}
-            avatar={initials}
-            defaultOpen={alta > 0}
-            badges={
-              <div className="flex gap-1.5">
-                {alta > 0 && <PriorityBadge priority="alta" />}
-                {media > 0 && <PriorityBadge priority="media" />}
-                {baja > 0 && <PriorityBadge priority="baja" />}
-              </div>
-            }
-          >
-            {ops.alerts.length === 0 ? (
-              <p className="text-sm text-muted py-2">✅ Sin alertas</p>
-            ) : (
-              ops.alerts
-                .sort((a, b) => {
-                  const order = { alta: 0, media: 1, baja: 2 };
-                  return order[a.priority] - order[b.priority];
-                })
-                .map((alert, i) => (
-                  <AlertCard
-                    key={i}
-                    priority={alert.priority}
-                    type={alert.type}
-                    groupName={alert.group_name}
-                    clientName={alert.client_name}
-                    detail={alert.detail}
-                    eventTime={alert.event_time}
-                    hoursWithoutResponse={alert.hours_without_response}
-                    actionSuggested={alert.action_suggested}
-                    shared={alert.shared}
-                  />
-                ))
-            )}
-          </CollapsibleSection>
-        );
-      })}
+      {/* Flat alert list */}
+      <div className="space-y-3">
+        {sorted.map((alert, i) => (
+          <div key={i} className="relative">
+            {/* Ops badge */}
+            <div className="absolute top-3 right-3 flex items-center gap-2 z-10">
+              <span className="text-[10px] bg-surface2 text-muted px-2 py-0.5 rounded-full font-medium">
+                {alert.ops_name}
+              </span>
+            </div>
+            <AlertCard
+              priority={alert.priority}
+              type={alert.type}
+              groupName={alert.group_name}
+              clientName={alert.client_name}
+              detail={alert.detail}
+              eventTime={alert.event_time}
+              hoursWithoutResponse={alert.hours_without_response}
+              actionSuggested={alert.action_suggested}
+              shared={alert.shared}
+            />
+          </div>
+        ))}
+        {sorted.length === 0 && (
+          <div className="text-center py-10 text-muted text-sm">
+            No hay alertas que coincidan con los filtros.
+          </div>
+        )}
+      </div>
 
       {data.observations && data.observations.length > 0 && (
         <div className="bg-surface border border-border rounded-xl p-5 mt-6">
