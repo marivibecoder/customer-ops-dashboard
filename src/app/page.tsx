@@ -15,7 +15,7 @@ import type {
 function ClientsPageInner() {
   const searchParams = useSearchParams();
   const date =
-    searchParams.get("date") || new Date().toISOString().slice(0, 10);
+    searchParams.get("date") || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' });
 
   const [clients, setClients] = useState<UnifiedClient[]>([]);
   const [loading, setLoading] = useState(true);

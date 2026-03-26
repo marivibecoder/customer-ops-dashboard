@@ -12,7 +12,7 @@ import type { PeriskopeReport } from "@/lib/types";
 function WhatsAppPageInner() {
   const searchParams = useSearchParams();
   const date =
-    searchParams.get("date") || new Date().toISOString().slice(0, 10);
+    searchParams.get("date") || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' });
 
   const [data, setData] = useState<PeriskopeReport | null>(null);
   const [loading, setLoading] = useState(true);

@@ -32,7 +32,8 @@ export async function runRefresh(
   onlySources?: SourceType[],
 ): Promise<RefreshResult> {
   const startTime = Date.now()
-  const today = new Date().toISOString().split('T')[0]
+  // Use Argentina timezone (UTC-3) for date
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' })
   const sourcesCompleted: string[] = []
   const errors: string[] = []
   const sourcesToRun = onlySources || ALL_SOURCES

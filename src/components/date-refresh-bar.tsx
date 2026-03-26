@@ -16,7 +16,7 @@ interface RefreshStatus {
 export function DateRefreshBar() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const currentDate = searchParams.get('date') || new Date().toISOString().split('T')[0]
+  const currentDate = searchParams.get('date') || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' })
 
   const [availableDates, setAvailableDates] = useState<Record<string, string[]>>({})
   const [refreshStatus, setRefreshStatus] = useState<RefreshStatus>({ status: 'none' })

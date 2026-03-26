@@ -10,7 +10,7 @@ import type { MetabaseReport } from "@/lib/types";
 function MetabasePageInner() {
   const searchParams = useSearchParams();
   const date =
-    searchParams.get("date") || new Date().toISOString().slice(0, 10);
+    searchParams.get("date") || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' });
 
   const [data, setData] = useState<MetabaseReport | null>(null);
   const [loading, setLoading] = useState(true);
