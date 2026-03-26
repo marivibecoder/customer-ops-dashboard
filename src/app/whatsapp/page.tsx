@@ -50,28 +50,34 @@ function WhatsAppPageInner() {
   ].sort();
 
   // Filter ops executives and their alerts
-  const filteredOps = data.ops_executives
-    .filter((ops) => !opsFilter || ops.name === opsFilter)
-    .map((ops) => ({
-      ...ops,
-      alerts: ops.alerts.filter((a) => {
-        if (priorityFilter && a.priority !== priorityFilter) return false;
-        if (typeFilter && a.type !== typeFilter) return false;
+  const hasActiveFilters = !!(priorityFilter || typeFilter || search);
+
+  const filteredOps: typeof data.ops_executives = [];
+  for (const ops of data.ops_executives) {
+    // Filter by ops name
+    if (opsFilter && ops.name !== opsFilter) continue;
+
+    // Filter alerts
+    const matchingAlerts = ops.alerts.filter((a) => {
+      if (priorityFilter && a.priority !== priorityFilter) return false;
+      if (typeFilter && a.type !== typeFilter) return false;
+      if (search) {
+        const s = search.toLowerCase();
         if (
-          search &&
-          !a.group_name.toLowerCase().includes(search.toLowerCase()) &&
-          !a.client_name?.toLowerCase().includes(search.toLowerCase()) &&
-          !a.detail.toLowerCase().includes(search.toLowerCase())
+          !a.group_name.toLowerCase().includes(s) &&
+          !(a.client_name || "").toLowerCase().includes(s) &&
+          !a.detail.toLowerCase().includes(s)
         )
           return false;
-        return true;
-      }),
-    }))
-    .filter((ops) => {
-      const hasActiveFilters = priorityFilter || typeFilter || search;
-      if (hasActiveFilters) return ops.alerts.length > 0;
-      return true; // show all ops when no filters active
+      }
+      return true;
     });
+
+    // If filters are active, only show ops with matching alerts
+    if (hasActiveFilters && matchingAlerts.length === 0) continue;
+
+    filteredOps.push({ ...ops, alerts: matchingAlerts });
+  }
 
   const totalFiltered = filteredOps.reduce(
     (sum, ops) => sum + ops.alerts.length,
