@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase'
-import { writeReport } from '@/lib/data'
+import { writeReport, readReport } from '@/lib/data'
 import { PeriskopeService } from '@/lib/services/periskope'
 import { SlackService } from '@/lib/services/slack'
 import { MetabaseService } from '@/lib/services/metabase'
@@ -159,6 +159,12 @@ export async function runRefresh(
 
   if (metabase) {
     tasks.push(withTimeout((async () => {
+      // Cache: skip Snowflake query if today's report already exists
+      const existing = await readReport('metabase', today)
+      if (existing) {
+        console.log('[Metabase] Using cached report from today — skipping Snowflake query')
+        return 'metabase' as const
+      }
       const rawData = await metabase.fetchAccountMetrics()
       const report = metabase.buildReport(rawData)
       await writeReport('metabase', today, report)
