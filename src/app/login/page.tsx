@@ -13,7 +13,7 @@ function LoginContent() {
     await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL || window.location.origin}/auth/callback`,
         queryParams: {
           hd: 'getdarwin.ai', // Restrict to Darwin AI domain in Google picker
         },
