@@ -149,7 +149,7 @@ Return ONLY valid JSON array, no markdown.`
 === CHANNEL: ${ch.channelName} ===
 Topic: ${ch.topic || 'No topic'}
 Messages (${ch.messages.length}):
-${ch.messages.slice(0, 50).map((m: any) => `[${new Date(Number(m.ts) * 1000).toISOString()}] ${m.user_profile?.real_name || m.user || 'Unknown'}: ${m.text || '(no text)'}`).join('\n')}
+${ch.messages.slice(0, 50).map((m: any) => `[${new Date(Number(m.ts) * 1000).toISOString()}] ${m.user_name || m.user_profile?.real_name || m.user || 'Unknown'}: ${m.text || '(no text)'}`).join('\n')}
 `).join('\n\n')
 
       try {

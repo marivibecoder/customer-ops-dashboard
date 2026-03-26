@@ -2,6 +2,7 @@ import { WebClient } from '@slack/web-api'
 
 export class SlackService {
   private client: WebClient
+  private userCache: Map<string, string> = new Map() // user_id -> display_name
 
   constructor(token: string) {
     this.client = new WebClient(token, {
@@ -9,7 +10,42 @@ export class SlackService {
     })
   }
 
-  // Find all customer/client channels where the bot IS a member
+  // Resolve a user ID to a display name
+  private async resolveUser(userId: string): Promise<string> {
+    if (this.userCache.has(userId)) return this.userCache.get(userId)!
+
+    try {
+      const result = await this.client.users.info({ user: userId })
+      const name = result.user?.profile?.real_name
+        || result.user?.profile?.display_name
+        || result.user?.name
+        || userId
+      this.userCache.set(userId, name)
+      return name
+    } catch {
+      this.userCache.set(userId, userId)
+      return userId
+    }
+  }
+
+  // Bulk resolve user IDs from messages
+  private async resolveUsers(messages: any[]): Promise<void> {
+    const userIds = new Set<string>()
+    for (const m of messages) {
+      if (m.user && !this.userCache.has(m.user)) {
+        userIds.add(m.user)
+      }
+    }
+
+    // Resolve in parallel batches of 5
+    const ids = Array.from(userIds)
+    for (let i = 0; i < ids.length; i += 5) {
+      const batch = ids.slice(i, i + 5)
+      await Promise.all(batch.map((id) => this.resolveUser(id)))
+    }
+  }
+
+  // Find all customer/client channels where the user IS a member
   async getClientChannels(): Promise<
     Array<{ id: string; name: string; topic: string }>
   > {
@@ -31,7 +67,6 @@ export class SlackService {
           name.startsWith('cliente-') ||
           name.startsWith('customer-')
 
-        // Only include channels where bot is already a member
         if (isClientChannel && ch.is_member) {
           channels.push({
             id: ch.id!,
@@ -43,7 +78,7 @@ export class SlackService {
       cursor = result.response_metadata?.next_cursor
     } while (cursor)
 
-    console.log(`[Slack] Found ${channels.length} client channels (bot is member)`)
+    console.log(`[Slack] Found ${channels.length} client channels (user is member)`)
     return channels
   }
 
@@ -66,7 +101,7 @@ export class SlackService {
     }
   }
 
-  // Main method: fetch all client channel data
+  // Main method: fetch all client channel data with resolved user names
   async fetchDailyData(): Promise<
     Array<{
       channelId: string
@@ -85,11 +120,20 @@ export class SlackService {
         batch.map(async (ch) => {
           const messages = await this.getChannelMessages(ch.id)
           if (messages.length > 0) {
+            // Resolve user names for all messages
+            await this.resolveUsers(messages)
+
+            // Enrich messages with resolved names
+            const enriched = messages.map((m: any) => ({
+              ...m,
+              user_name: m.user ? (this.userCache.get(m.user) || m.user) : 'Unknown',
+            }))
+
             return {
               channelId: ch.id,
               channelName: ch.name,
               topic: ch.topic,
-              messages,
+              messages: enriched,
             }
           }
           return null
@@ -98,7 +142,7 @@ export class SlackService {
       results.push(...batchResults.filter(Boolean))
     }
 
-    console.log(`[Slack] ${results.length} channels with activity in last 24h`)
+    console.log(`[Slack] ${results.length} channels with activity, ${this.userCache.size} users resolved`)
     return results as Array<{
       channelId: string
       channelName: string
