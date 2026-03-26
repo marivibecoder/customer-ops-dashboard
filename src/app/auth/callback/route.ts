@@ -3,8 +3,9 @@ import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 
 export async function GET(request: Request) {
-  const { searchParams, origin } = new URL(request.url)
+  const { searchParams } = new URL(request.url)
   const code = searchParams.get('code')
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://customer-ops-dashboard-production.up.railway.app'
 
   if (code) {
     const cookieStore = await cookies()
@@ -30,13 +31,13 @@ export async function GET(request: Request) {
       // Check domain
       const { data: { user } } = await supabase.auth.getUser()
       if (user?.email?.endsWith('@getdarwin.ai')) {
-        return NextResponse.redirect(`${origin}/`)
+        return NextResponse.redirect(`${appUrl}/`)
       } else {
         await supabase.auth.signOut()
-        return NextResponse.redirect(`${origin}/login?error=domain`)
+        return NextResponse.redirect(`${appUrl}/login?error=domain`)
       }
     }
   }
 
-  return NextResponse.redirect(`${origin}/login?error=auth`)
+  return NextResponse.redirect(`${appUrl}/login?error=auth`)
 }
